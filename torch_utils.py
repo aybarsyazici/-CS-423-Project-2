@@ -33,6 +33,13 @@ class MovieRatingDataset(Dataset):
         movies_new_df = pd.read_excel('data/movies_df.xlsx')
         # Merge movies_new_df with movies_df on movieId
         self.movies = self.movies.merge(movies_new_df, on='movieId', how='left')
+        # Normalize the following columns: budget, popularity, runtime, vote_average, vote_count, revenue
+        self.movies['budget'] = self.movies['budget'].apply(lambda x: (x - self.movies['budget'].mean()) / self.movies['budget'].std())
+        self.movies['popularity'] = self.movies['popularity'].apply(lambda x: (x - self.movies['popularity'].mean()) / self.movies['popularity'].std())
+        self.movies['runtime'] = self.movies['runtime'].apply(lambda x: (x - self.movies['runtime'].mean()) / self.movies['runtime'].std())
+        self.movies['vote_average'] = self.movies['vote_average'].apply(lambda x: (x - self.movies['vote_average'].mean()) / self.movies['vote_average'].std())
+        self.movies['vote_count'] = self.movies['vote_count'].apply(lambda x: (x - self.movies['vote_count'].mean()) / self.movies['vote_count'].std())
+        self.movies['revenue'] = self.movies['revenue'].apply(lambda x: (x - self.movies['revenue'].mean()) / self.movies['revenue'].std())
         # Fill NaN for the following Cols with 0 [budget, popularity, runtime, vote_average, vote_count, revenue]
         self.movies['budget'] = self.movies['budget'].fillna(0)
         self.movies['popularity'] = self.movies['popularity'].fillna(0)
@@ -184,11 +191,8 @@ class Recommender(nn.Module):
         user_emb = self.user_embedding(users)
         movie_emb = self.movie_embedding(movies)
         tag_emb = self.tag_embedding(tags)
-        # Average tag embeddings
         tag_emb = tag_emb.mean(dim=1)
-        # Concatenate all features
-        # Everything after and including lang is 1D (N), the others are 2D (N, embed_dim)
-        # To concatenate them, we need to unsqueeze lang to make it 2D (N, 1)
+        # By taking the mean we go from (Nx??x50) to (Nx50)
         lang = lang.unsqueeze(1)
         budget = budget.unsqueeze(1)
         popularity = popularity.unsqueeze(1)
@@ -196,9 +200,21 @@ class Recommender(nn.Module):
         vote_average = vote_average.unsqueeze(1)
         vote_count = vote_count.unsqueeze(1)
         revenue = revenue.unsqueeze(1)
-        x = torch.cat([user_emb, movie_emb, genres, tag_emb, lang, budget, popularity, runtime, vote_average, vote_count, revenue], dim=1)
+        x = torch.cat([
+            user_emb,
+            movie_emb,
+            genres,
+            tag_emb,
+            lang,
+            budget,
+            popularity,
+            runtime,
+            vote_average,
+            vote_count,
+            revenue
+        ], dim=1)
         x = self.fc(x)
         x = x.squeeze()
         # We want to predict ratings between 0.5 and 5.0
-        x = torch.sigmoid(x) * 4.5 + 0.5
+        #x = torch.sigmoid(x) * 4.5 + 0.5
         return x
