@@ -8,6 +8,8 @@ from torchtext.vocab import vocab
 
 from collections import Counter
 
+EMBEDDING_DIM = 15
+
 # P.S: Change this to CUDA if you are on Linux/Windows and have a GPU
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
@@ -28,7 +30,7 @@ class MovieRatingDataset(Dataset):
         else:
             raise ValueError('train must be one of "train", "test", or "valid"')
         
-        self.movies = pd.read_csv('data/movies.csv')
+        self.movies = pd.read_csv('data/movies.csv', encoding='latin-1')
         # read movies from movies_df.xlsx
         movies_new_df = pd.read_excel('data/movies_df.xlsx')
         # Merge movies_new_df with movies_df on movieId
@@ -80,9 +82,13 @@ class MovieRatingDataset(Dataset):
         self.vocab = tag_vocab
         # 6. Encode tags as integer indices
         self.data_df['tag_label'] = self.data_df['tags'].apply(lambda x: [self.vocab[token] for token in x])
+        
+        # Get the sentence embeddings and convert them to float array from strings
+        # The embeddings belonging to the overviews of nan value are also nan
+        self.movies["overview_embeddings"] = self.movies["overview_embeddings"].map(lambda x: [float(i) for i in x[1:-1].split(", ")] if isinstance(x,str) else [0.0 for _ in range(EMBEDDING_DIM)] )
         # Make movieId the index in movies
         self.movies = self.movies.set_index('movieId')
-
+ 
     def get_data_df(self):
         return self.data_df
 
@@ -102,11 +108,12 @@ class MovieRatingDataset(Dataset):
         vote_average = self.movies.loc[row['movieId']]['vote_average']
         vote_count = self.movies.loc[row['movieId']]['vote_count']
         revenue = self.movies.loc[row['movieId']]['revenue']
+        overview_embeddings = self.movies.loc[row['movieId']]['overview_embeddings']
         if self.train == 'train' or self.train == 'valid':
             rating = row['rating']
-            return (user, movie, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, rating)
+            return (user, movie, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings, rating)
         row_id = row['Id']
-        return (row_id, user, movie, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue)
+        return (row_id, user, movie, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings)
 
     @classmethod
     def build_tag_vocab(cls, tokenizer, min_freq=1, pad_token='<pad>', unk_token='<unk>', tags_df=None):
@@ -129,7 +136,7 @@ class MovieRatingDataset(Dataset):
 """
 
 class Recommender(nn.Module):
-    def __init__(self, num_users, num_movies, num_genres, num_tags, user_movie_embed=100, tag_embed=50, freeze=False, tag_weights=None, device='cpu', padding_idx=0):
+    def __init__(self, num_users, num_movies, num_genres, num_tags, user_movie_embed=30, tag_embed=30, freeze=False, tag_weights=None, device='cpu', padding_idx=0):
         super(Recommender, self).__init__()
         self.device = device
         self.padding_idx = padding_idx
@@ -142,18 +149,19 @@ class Recommender(nn.Module):
         self.fc = nn.Sequential(
             # we add 7 because: budget, popularity, runtime, vote_average, vote_count, revenue, lang
             nn.Linear(
-                user_movie_embed * 2 + num_genres + tag_embed + 7,
+                user_movie_embed + EMBEDDING_DIM + 3 + num_genres,
                 128
             ),
+            #tag_embed - user_movie_embed * 2 + num_genres + 7 + EMBEDDING_DIM,
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 1)
+            nn.Dropout(0.2),
+            nn.Linear(128, 1),
         )
         self.to(device)
 
     def collate_fn(self, batch):
         # get_item returns: (user, movie, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, rating)
-        users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, ratings = zip(*batch)
+        users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings, ratings = zip(*batch)
         users = torch.LongTensor(users).to(self.device)
         movies = torch.LongTensor(movies).to(self.device)
         genres = torch.FloatTensor(genres).to(self.device)
@@ -166,11 +174,12 @@ class Recommender(nn.Module):
         vote_average = torch.FloatTensor(vote_average).to(self.device)
         vote_count = torch.FloatTensor(vote_count).to(self.device)
         revenue = torch.FloatTensor(revenue).to(self.device)
+        overview_embeddings = torch.FloatTensor(overview_embeddings).to(self.device)
 
-        return ratings, (users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue)
+        return ratings, (users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings)
 
     def collate_fn_test(self, batch):
-        row_id, users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue = zip(*batch)
+        row_id, users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings = zip(*batch)
         row_id = torch.LongTensor(row_id).to(self.device)
         users = torch.LongTensor(users).to(self.device)
         movies = torch.LongTensor(movies).to(self.device)
@@ -183,11 +192,12 @@ class Recommender(nn.Module):
         vote_average = torch.FloatTensor(vote_average).to(self.device)
         vote_count = torch.FloatTensor(vote_count).to(self.device)
         revenue = torch.FloatTensor(revenue).to(self.device)
+        overview_embeddings = torch.FloatTensor(overview_embeddings).to(self.device)
 
-        return row_id, (users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue)
+        return row_id, (users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings)
 
     def forward(self, x):
-        users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue = x
+        users, movies, genres, tags, lang, budget, popularity, runtime, vote_average, vote_count, revenue, overview_embeddings = x
         user_emb = self.user_embedding(users)
         movie_emb = self.movie_embedding(movies)
         tag_emb = self.tag_embedding(tags)
@@ -202,16 +212,17 @@ class Recommender(nn.Module):
         revenue = revenue.unsqueeze(1)
         x = torch.cat([
             user_emb,
-            movie_emb,
+            #movie_emb,
             genres,
-            tag_emb,
-            lang,
-            budget,
+            #tag_emb,
+            #lang,
+            #budget,
             popularity,
-            runtime,
+            #runtime,
             vote_average,
-            vote_count,
-            revenue
+            #vote_count,
+            revenue,
+            overview_embeddings
         ], dim=1)
         x = self.fc(x)
         x = x.squeeze()
