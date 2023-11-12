@@ -146,16 +146,23 @@ class Recommender(nn.Module):
             self.tag_embedding = nn.Embedding.from_pretrained(tag_weights, freeze=freeze, padding_idx=padding_idx)
         else:
             self.tag_embedding = nn.Embedding(num_tags, tag_embed, padding_idx=padding_idx)
+        input_dim = user_movie_embed + EMBEDDING_DIM + 3 + num_genres
+        print(f'input_dim: {input_dim}')
         self.fc = nn.Sequential(
             # we add 7 because: budget, popularity, runtime, vote_average, vote_count, revenue, lang
             nn.Linear(
-                user_movie_embed + EMBEDDING_DIM + 3 + num_genres,
-                128
+                input_dim,
+                input_dim*2
             ),
-            #tag_embed - user_movie_embed * 2 + num_genres + 7 + EMBEDDING_DIM,
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(128, 1),
+            nn.Linear(
+                input_dim*2,
+                input_dim//2,
+            ),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(input_dim//2, 1),
         )
         self.to(device)
 
