@@ -3,6 +3,7 @@ data/
 
 # ignore all that end with .csv
 *.csv
+submissions/
 
 # ignore vector_cache
 .vector_cache/

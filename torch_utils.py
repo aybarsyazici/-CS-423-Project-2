@@ -146,7 +146,9 @@ class Recommender(nn.Module):
             self.tag_embedding = nn.Embedding.from_pretrained(tag_weights, freeze=freeze, padding_idx=padding_idx)
         else:
             self.tag_embedding = nn.Embedding(num_tags, tag_embed, padding_idx=padding_idx)
-        input_dim = user_movie_embed + EMBEDDING_DIM + 3 + num_genres
+            if freeze:
+                self.tag_embedding.weight.requires_grad = False
+        input_dim = user_movie_embed + tag_embed + num_genres + EMBEDDING_DIM + 7
         print(f'input_dim: {input_dim}')
         self.fc = nn.Sequential(
             # we add 7 because: budget, popularity, runtime, vote_average, vote_count, revenue, lang
@@ -162,6 +164,12 @@ class Recommender(nn.Module):
             ),
             nn.ReLU(),
             nn.Dropout(0.2),
+            # nn.Linear(
+            #     input_dim,
+            #     input_dim//2,
+            # ),
+            # nn.ReLU(),
+            # nn.Dropout(0.2),
             nn.Linear(input_dim//2, 1),
         )
         self.to(device)
@@ -217,17 +225,18 @@ class Recommender(nn.Module):
         vote_average = vote_average.unsqueeze(1)
         vote_count = vote_count.unsqueeze(1)
         revenue = revenue.unsqueeze(1)
+
         x = torch.cat([
             user_emb,
             #movie_emb,
             genres,
-            #tag_emb,
-            #lang,
-            #budget,
+            tag_emb,
+            lang,
+            budget,
             popularity,
-            #runtime,
+            runtime,
             vote_average,
-            #vote_count,
+            vote_count,
             revenue,
             overview_embeddings
         ], dim=1)
